@@ -1,0 +1,63 @@
+version: "3"
+services:
+  oplogtoredis:
+    build:
+      context: ..
+      dockerfile: blackbox-tests/Dockerfile.oplogtoredis-blackbox
+    command:
+      - /wait-for.sh
+      - redis:6380
+      - '--'
+      - /wait-for.sh
+      - mongo:27017
+      - '--'
+      - sh
+      - -c
+      - |
+        update-ca-certificates
+        oplogtoredis
+    environment:
+      - OTR_MONGO_URL=mongodb://mongo/dev
+      - OTR_REDIS_URL=rediss://redis:6380
+      - OTR_OPLOG_V2_EXTRACT_SUBFIELD_CHANGES=true
+    ports:
+      - 9000:9000
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./certificates/ca.crt:/usr/local/share/ca-certificates/ca.crt:ro
+
+  mongo:
+    image: mongo:5.0.19
+    command: "mongod --replSet myapp --port 27017 --bind_ip 0.0.0.0"
+    healthcheck:
+      test: test $$(echo "rs.initiate({_id:'myapp',members:[{_id:0,host:\"mongo:27017\"}]}).ok || rs.status().ok" | mongo --port 27017 --quiet) -eq 1
+      interval: 10s
+      start_period: 30s
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:6.0
+    hostname: redis
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./certificates/ca.crt:/ca.crt:ro
+      - ./certificates/server-cert.pem:/server-cert.pem:ro
+      - ./certificates/server-key.pem:/server-key.pem:ro
+    logging:
+      driver: none
+    ports:
+      - 6380:6380
+    command:
+      - sh
+      - -c
+      - |
+        chown $USER:$USER /*.pem /ca.crt
+        chmod 600 /server-key.pem
+        redis-server /usr/local/etc/redis/redis.conf
+volumes:
+  mongo_data:
